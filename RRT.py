@@ -3,7 +3,6 @@ import random
 from itertools import count
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 class Vertex:
     def __init__(self, x, y):
@@ -20,7 +19,7 @@ class Vertex:
         return hash((self.x, self.y))
 
 class RRT:
-    def __init__(self, start, goal, obstacle, workspace, eta=2.5,
+    def __init__(self, start, goal, obstacle, workspace, animation=True, eta=2.5,
                  goal_sample_rate=0.01):
         """
         start:Start Position [x,y]
@@ -34,12 +33,21 @@ class RRT:
         self.max_rand = workspace[1]
         self.eta = eta
         self.goal_sample_rate = goal_sample_rate
-        self.obstacle = self.convert_to_rectangle(obstacle[0],obstacle[1],self.min_rand,self.max_rand)  
+        self.animation=animation
+        self.obstacle = []
+        if isinstance(obstacle, tuple):
+            self.obstacle.append(self.convert_to_rectangle(obstacle[0],obstacle[1],self.min_rand,self.max_rand)) 
+        elif isinstance(obstacle, list):
+            for o in obstacle:
+                ref, length, orientation, translation = o
+                self.obstacle.append(self.generate_rectangle_from_reference(ref, length, orientation, translation))
         self.vertices = []
+        self.iterations = 0
+        self.num_vertices = 0
 
     def planning(self):
         self.vertices = [self.start]
-        for counter in count(): 
+        for self.iterations in count(): 
             if self.goal in self.vertices:
                 break
             x_rand = self.sample_random_vertex()
@@ -49,36 +57,27 @@ class RRT:
             if self.is_edge_valid(v_nearest, x_new):
                 self.vertices.append(x_new)
 
-            if counter % 3 == 0:
+            if self.iterations % 3 and self.animation is True == 0:
                 self.update_graph(x_rand)
 
         return self.final_path(len(self.vertices) - 1)
 
     def steer(self, v_nearest, x_rand):
-        path_resolution=0.5
         x_new = Vertex(v_nearest.x, v_nearest.y)
         d, angle = self.calc_distance_and_angle(x_new, x_rand)
 
         x_new.path_x = [x_new.x]
         x_new.path_y = [x_new.y]
 
-        if self.eta > d:
-            n_steps = math.floor(d / path_resolution)
+        if self.eta < d:
+            x_new.x += self.eta * math.cos(angle)
+            x_new.y += self.eta * math.sin(angle)
         else:
-            n_steps = math.floor(self.eta / path_resolution)
+            x_new.x += d * math.cos(angle)
+            x_new.y += d * math.sin(angle)
 
-        for _ in range(n_steps):
-            x_new.x += path_resolution * math.cos(angle)
-            x_new.y += path_resolution * math.sin(angle)
-            x_new.path_x.append(x_new.x)
-            x_new.path_y.append(x_new.y)
-
-        d, _ = self.calc_distance_and_angle(x_new, x_rand)
-        if d <= path_resolution:
-            x_new.path_x.append(x_rand.x)
-            x_new.path_y.append(x_rand.y)
-            x_new.x = x_rand.x
-            x_new.y = x_rand.y
+        x_new.path_x.append(x_new.x)
+        x_new.path_y.append(x_new.y)
 
         x_new.parent = v_nearest 
 
@@ -87,14 +86,15 @@ class RRT:
     def is_vertex_valid(self, vertex):
         if vertex is None:
             return False
-        left, right, bottom, top = self.obstacle
-        for x, y in zip(vertex.path_x, vertex.path_y):
-            if (left  <= x <= right and bottom <= y <= top):
-                return False  
+        for o in self.obstacle:
+            left, right, bottom, top = o
+            for x, y in zip(vertex.path_x, vertex.path_y):
+                if (left  <= x <= right and bottom <= y <= top):
+                    return False  
         return True  
 
     def is_edge_valid(self, v_nearest, x_rand):
-        path_resolution=0.5
+        path_resolution=0.1
         x_new = Vertex(v_nearest.x, v_nearest.y)
         d, angle = self.calc_distance_and_angle(x_new, x_rand)
         if not self.is_vertex_valid(x_rand):
@@ -135,8 +135,9 @@ class RRT:
             if vertex.parent:
                 plt.plot(vertex.path_x, vertex.path_y, "-y")
 
-        # Plot the blue rectangle obstacle
-        self.plot_rectangle(self.obstacle)
+        for o in self.obstacle:
+            # Plot the blue rectangle obstacle
+            self.plot_rectangle(o)
 
         # Plot the green start "S" and red goal "G"
         plt.plot(self.start.x, self.start.y, c="g", marker=r"$\mathbb{S}$")
@@ -170,6 +171,7 @@ class RRT:
             path.append([vertex.x, vertex.y])
             vertex = vertex.parent
         path.append([vertex.x, vertex.y])
+        self.num_vertices = len(self.vertices)
         return path
 
     @staticmethod
@@ -194,7 +196,6 @@ class RRT:
 
     @staticmethod
     def plot_rectangle(rectangle, color="-b"):
-        # Calculate rectangle boundaries
         left, right, bottom, top = rectangle
 
         # Rectangle corners
@@ -212,29 +213,26 @@ class RRT:
         angle = math.atan2(dy, dx)
         return length, angle
 
-def main():
-    obstacles = [(25,10), (4,10)]
+    @staticmethod
+    def generate_rectangle_from_reference(reference, length, orientation="horizontal", translation=(10, 0)):
+        x_ref, y_ref = reference
+        dx, dy = translation
+        x_translated = x_ref + dx
+        y_translated = y_ref + dy
 
-    # Set Initial parameters
-    rrt = RRT(
-        start=[25.0, 50.0],
-        goal=[75.0, 50.0],
-        workspace=[0, 100],
-        obstacle=obstacles[0],
-        )
-    path = rrt.planning()
+        if orientation == "horizontal":
+            # Fixed height of 10, horizontal length is variable
+            left = x_translated-length/2
+            right = x_translated + length/2
+            bottom = y_translated - 2.5
+            top = y_translated + 2.5
+        elif orientation == "vertical":
+            # Fixed width of 10, vertical length is variable
+            left = x_translated - 2.5
+            right = x_translated + 2.5
+            bottom = y_translated-length/2
+            top = y_translated + length/2
+        else:
+            raise ValueError("Invalid orientation. Choose 'horizontal' or 'vertical'.")
 
-    if path is None:
-        print("Cannot find path")
-    else:
-        print("found path!!")
-
-        # Draw final path
-        rrt.update_graph()
-        plt.plot([x for (x, y) in path], [y for (x, y) in path], '-r')
-        plt.grid(True)
-        plt.pause(0.01)
-        plt.show()
-
-if __name__ == '__main__':
-    main()
+        return left, right, bottom, top

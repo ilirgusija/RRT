@@ -1,2 +1,8 @@
 __pycache__
 __pycache__*
+.DS_*
+tex/*
+!tex/report.tex
+!tex/report.pdf
+!tex/figures
+!tex/figure/*
